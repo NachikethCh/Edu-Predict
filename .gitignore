@@ -61,3 +61,12 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Python virtual environments and caches
+.venv-ml/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
