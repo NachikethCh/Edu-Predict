@@ -1,0 +1,74 @@
+{
+  "dataset": "UCI Student Performance - Mathematics",
+  "dataset_rows": 395,
+  "target": "G3",
+  "target_scale": "0-20",
+  "cross_validation": "5-fold shuffled KFold, random_state=42",
+  "sklearn_version": "1.9.1",
+  "warning": "Research results on Portuguese students; not validated for KV or CBSE students.",
+  "models": {
+    "early": {
+      "features": [
+        "age",
+        "studytime",
+        "failures",
+        "absences",
+        "schoolsup",
+        "famsup",
+        "paid",
+        "higher",
+        "internet",
+        "goout",
+        "traveltime",
+        "health"
+      ],
+      "model_params": {
+        "n_estimators": 600,
+        "max_depth": null,
+        "min_samples_split": 5,
+        "min_samples_leaf": 1,
+        "max_features": 1.0
+      },
+      "cross_validation_metrics": {
+        "mae": 2.936628961158391,
+        "rmse": 3.8935599545000397,
+        "r2": 0.2759140756034679
+      },
+      "model_file": "artifacts/ml-models/early_model.joblib",
+      "validated_for_kv": false,
+      "validated_for_cbse": false
+    },
+    "updated": {
+      "features": [
+        "G1",
+        "age",
+        "studytime",
+        "failures",
+        "absences",
+        "schoolsup",
+        "famsup",
+        "paid",
+        "higher",
+        "internet",
+        "goout",
+        "traveltime",
+        "health"
+      ],
+      "model_params": {
+        "n_estimators": 400,
+        "max_depth": 16,
+        "min_samples_split": 2,
+        "min_samples_leaf": 1,
+        "max_features": 0.8
+      },
+      "cross_validation_metrics": {
+        "mae": 1.6002311030741412,
+        "rmse": 2.2499186277423164,
+        "r2": 0.7582146433420545
+      },
+      "model_file": "artifacts/ml-models/updated_model.joblib",
+      "validated_for_kv": false,
+      "validated_for_cbse": false
+    }
+  }
+}

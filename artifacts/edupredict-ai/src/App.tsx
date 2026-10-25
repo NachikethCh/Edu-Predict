@@ -1,0 +1,550 @@
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ErrorBoundary } from '@/components/error-boundary';
+import { Toaster } from '@/components/ui/toaster';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import NotFound from '@/pages/not-found';
+import { Route, Switch, useLocation, Router as WouterRouter, Link } from 'wouter';
+import {
+  ArrowDownToLine, ArrowRight, ArrowUpRight, BarChart3, BookOpen, Check,
+  ChevronRight, CircleHelp, Database, FileSpreadsheet, GraduationCap,
+  HeartHandshake, Info, Lightbulb, LoaderCircle, Menu, ShieldCheck,
+  Sparkles, Upload, Users, X, Settings2,
+} from 'lucide-react';
+import {
+  useGetStudentPerformanceModel,
+  getGetStudentPerformanceModelQueryKey,
+  usePredictStudentPerformance,
+  usePredictStudentPerformanceCsv,
+  type StudentFeatures,
+  type PredictionInput,
+  type PredictionResult,
+  type ModelOverview,
+  type CsvPredictionResult,
+} from '@workspace/api-client-react';
+import { serializeCsvResults } from '@/lib/csv-export';
+import { CurriculumProvider, useCurriculum } from '@/lib/curriculum-context';
+import { classLabel, findModelSupport, getCurriculumEntry, SCHOOL_STREAMS, STREAM_LABELS, type SchoolStream } from '@/lib/curriculum-config';
+
+const queryClient = new QueryClient();
+type PageKey = 'home' | 'predict' | 'evaluate' | 'csv' | 'curriculum';
+
+const navItems: { href: string; label: string; key: PageKey; icon: typeof BookOpen }[] = [
+  { href: '/', label: 'Overview', key: 'home', icon: BookOpen },
+  { href: '/predict', label: 'Student estimate', key: 'predict', icon: Sparkles },
+  { href: '/evaluate', label: 'Model evidence', key: 'evaluate', icon: BarChart3 },
+  { href: '/csv', label: 'CSV upload', key: 'csv', icon: FileSpreadsheet },
+  { href: '/curriculum', label: 'Curriculum setup', key: 'curriculum', icon: Settings2 },
+];
+
+function Shell({ children }: { children: ReactNode }) {
+  const [location] = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const active = navItems.find((item) => item.href === location)?.key;
+  return (
+    <div className="app-shell min-h-[100dvh] md:grid md:grid-cols-[252px_minmax(0,1fr)]">
+      <aside className="sidebar hidden md:flex md:flex-col md:min-h-[100dvh] md:sticky md:top-0 md:h-[100dvh] px-5 py-6">
+        <Brand />
+        <div className="mt-12 mb-3 px-3 text-[10px] font-bold uppercase tracking-[.2em] text-[#a7c1b5]">Workspace</div>
+        <nav aria-label="Main navigation" className="space-y-1">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return <Link data-testid={`link-nav-${item.key}`} key={item.href} href={item.href} className={`nav-item flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors ${active === item.key ? 'bg-[#725CFF] text-white' : 'text-[#d7d9f5] hover:bg-white/10'}`}>
+              <Icon size={17} strokeWidth={1.8} /><span>{item.label}</span>{active === item.key && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#A78BFA]" />}
+            </Link>;
+          })}
+        </nav>
+        <div className="mt-auto">
+          <div className="rounded-2xl border border-white/15 bg-[#24204F] p-4">
+            <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-full bg-[#A78BFA] text-[#171B3B]"><HeartHandshake size={16} /></div>
+            <p className="text-sm font-semibold text-white">A signal, not a label.</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-[#d7d9f5]">Use estimates to start a supportive conversation—not to make decisions about a student.</p>
+          </div>
+          <div className="mt-5 flex items-center gap-2 px-2 text-[11px] text-[#c5c7e8]"><ShieldCheck size={14} /> Evidence and limits are always visible</div>
+        </div>
+      </aside>
+      <div className="min-w-0">
+        <header className="sticky top-0 z-10 border-b border-[#e0e3ef] bg-white/95 px-4 py-3 backdrop-blur md:hidden">
+          <div className="flex items-center justify-between"><Brand compact /><button data-testid="button-mobile-menu" aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileOpen} onClick={() => setMobileOpen(!mobileOpen)} className="rounded-lg border border-[#dfe2ef] p-2">{mobileOpen ? <X size={19} /> : <Menu size={19} />}</button></div>
+          {mobileOpen && <nav aria-label="Mobile navigation" className="mt-3 grid grid-cols-2 gap-2">{navItems.map((item) => { const Icon = item.icon; return <Link key={item.href} data-testid={`link-mobile-${item.key}`} href={item.href} onClick={() => setMobileOpen(false)} className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm ${active === item.key ? 'bg-[#EAE7FF] text-[#4934C8]' : 'bg-[#F4F3FF]'}`}><Icon size={16} />{item.label}</Link>; })}</nav>}
+        </header>
+        <main className="mx-auto w-full max-w-[1440px] px-4 pb-16 pt-6 sm:px-6 md:px-10 md:pt-10 xl:px-14">
+          <div className="mb-7 hidden items-center justify-between md:flex">
+            <div className="flex items-center gap-2 text-xs text-[#737895]"><span>EduPredict</span><ChevronRight size={13} /><span className="font-semibold text-[#35305F]">{navItems.find((item) => item.key === active)?.label ?? 'Workspace'}</span></div>
+            <div className="flex items-center gap-2 rounded-full border border-[#e0e2ef] bg-white px-3 py-1.5 text-[11px] font-medium text-[#5F6280]"><span className="h-1.5 w-1.5 rounded-full bg-[#8B7CFF]" /> Student support research tool</div>
+          </div>
+          <div className="page-enter">{children}</div>
+          <footer className="mt-16 flex flex-col gap-2 border-t border-[#e0e2ef] pt-5 text-xs text-[#737895] sm:flex-row sm:items-center sm:justify-between">
+            <span>EduPredict AI <span className="mx-1 text-[#b4b4a7]">/</span> An early signal for a human conversation.</span>
+            <span className="flex items-center gap-1.5"><Info size={13} /> Estimates are uncertain and should never be used alone.</span>
+          </footer>
+        </main>
+      </div>
+      <div className="noise" aria-hidden="true" />
+    </div>
+  );
+}
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return <Link href="/" data-testid="link-brand" className="flex items-center gap-3">
+    <div className="relative flex h-10 w-10 items-center justify-center rounded-[14px] bg-[#A78BFA] text-[#171B3B]"><GraduationCap size={22} strokeWidth={2.1} /><span className="absolute right-[7px] top-[8px] h-1.5 w-1.5 rounded-full bg-[#fff4de]" /></div>
+    <div><div className={`display text-[18px] font-extrabold leading-tight ${compact ? 'text-[#24204F]' : 'text-[#fff6e7] md:text-white'}`}>EduPredict<span className="text-[#ed9b63]">.</span></div>{!compact && <div className="mt-0.5 text-[9px] font-semibold uppercase tracking-[.17em] text-[#C5C7E8]">Student support lab</div>}</div>
+  </Link>;
+}
+
+function PageHeading({ eyebrow, title, description, action }: { eyebrow: string; title: ReactNode; description: string; action?: ReactNode }) {
+  return <div className="mb-8 flex flex-col justify-between gap-5 md:flex-row md:items-end">
+    <div><div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.17em] text-[#6D5CE7]"><span className="h-px w-5 bg-[#A78BFA]" />{eyebrow}</div><h1 className="display max-w-3xl text-[34px] font-bold leading-[1.08] text-[#24204F] sm:text-[42px]">{title}</h1><p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-[#737895]">{description}</p></div>
+    {action}
+  </div>;
+}
+
+function Card({ children, className = '', testId }: { children: ReactNode; className?: string; testId?: string }) {
+  return <section data-testid={testId} className={`rounded-[20px] border border-[#E0E2EF] bg-white shadow-[0_5px_20px_rgba(47,69,57,.035)] ${className}`}>{children}</section>;
+}
+
+function Eyebrow({ children }: { children: ReactNode }) { return <div className="text-[10px] font-bold uppercase tracking-[.16em] text-[#7772A6]">{children}</div>; }
+function formatBand(band: string) { return band.replaceAll('_', ' '); }
+function num(value: number | undefined, digits = 2) { return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '—'; }
+
+function ModelNotice({ model, compact = false }: { model?: ModelOverview; compact?: boolean }) {
+  if (!model) return <div data-testid="status-evidence-unavailable" className="flex gap-3 rounded-xl border border-[#e4d4b5] bg-[#fbf4e4] p-4 text-sm text-[#645b45]"><Info className="mt-0.5 shrink-0" size={17} /><span>Model provenance is currently unavailable. Any result shown should be treated as unverified until evidence details load.</span></div>;
+  return <div data-testid="panel-evidence-note" className={`flex gap-3 rounded-xl border border-[#d7dfd2] bg-[#edf2e9] text-[#52685b] ${compact ? 'p-3 text-xs' : 'p-4 text-sm'}`}><ShieldCheck className="mt-0.5 shrink-0 text-[#3b7766]" size={compact ? 15 : 17} /><p><strong className="font-semibold text-[#31584e]">Evidence boundary.</strong> Estimates are based on {model.datasetName}, not a complete picture of a student. Similar records are not guarantees; use this as one conversation starter, never as a label or sole basis for action.</p></div>;
+}
+
+function LoadingPanel() { return <div data-testid="status-model-loading" className="animate-pulse rounded-[20px] border border-[#E0E2EF] bg-white p-6"><div className="h-3 w-32 rounded bg-[#e5e3d7]" /><div className="mt-5 h-7 w-2/3 rounded bg-[#e5e3d7]" /><div className="mt-3 h-4 w-full rounded bg-[#eeece2]" /><div className="mt-2 h-4 w-4/5 rounded bg-[#eeece2]" /></div>; }
+function QueryError({ onRetry }: { onRetry: () => void }) { return <div data-testid="status-model-error" className="rounded-xl border border-[#e5c6bc] bg-[#fbefea] p-4 text-sm text-[#784f43]"><p>We could not load the model evidence just now.</p><button data-testid="button-retry-model" onClick={onRetry} className="mt-2 font-bold underline underline-offset-2">Try again</button></div>; }
+
+function HomePage() {
+  const modelQuery = useGetStudentPerformanceModel({ query: { queryKey: getGetStudentPerformanceModelQueryKey() } });
+  return <Shell><PageHeading eyebrow="A clearer starting point" title={<>Notice a signal.<br className="hidden sm:block" /> Make room for support.</>} description="EduPredict turns a few first-term academic signals into a transparent estimate and practical next steps—so students can get support earlier, without being reduced to a score." action={<Link href="/predict" data-testid="link-start-prediction" className="btn-primary inline-flex items-center justify-center gap-2">Explore an estimate <ArrowRight size={17} /></Link>} />
+    <div className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
+      <Card className="overflow-hidden p-0" testId="panel-how-it-works">
+        <div className="relative overflow-hidden bg-gradient-to-br from-[#24204F] to-[#171B3B] px-6 py-7 text-white sm:px-9 sm:py-9">
+          <div className="absolute -right-10 -top-16 h-64 w-64 rounded-full border border-white/15" /><div className="absolute -right-1 top-0 h-48 w-48 rounded-full border border-white/10" />
+          <div className="relative max-w-xl"><div className="inline-flex items-center gap-2 rounded-full border border-[#87a89a]/40 bg-[#456c62] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[.14em] text-[#dce9d7]"><Sparkles size={13} /> A first-term perspective</div><h2 className="display mt-5 text-3xl font-bold leading-tight sm:text-[38px]">Not a verdict.<br />A useful next question.</h2><p className="mt-4 max-w-lg text-sm leading-relaxed text-indigo-100">The model looks for patterns in past student records. Its estimate is a prompt to ask what would help—not a prediction of what a student can become.</p>
+            <div className="mt-7 flex flex-wrap gap-x-6 gap-y-3 text-xs text-indigo-100"><span className="flex items-center gap-2"><span className="grid h-6 w-6 place-items-center rounded-full bg-[#A78BFA] text-[#171B3B]">1</span> Share early signals</span><span className="flex items-center gap-2"><span className="grid h-6 w-6 place-items-center rounded-full bg-[#A78BFA] text-[#171B3B]">2</span> See estimate + context</span><span className="flex items-center gap-2"><span className="grid h-6 w-6 place-items-center rounded-full bg-[#A78BFA] text-[#171B3B]">3</span> Choose a supportive step</span></div>
+          </div>
+        </div>
+        <div className="grid sm:grid-cols-3">
+          <Step icon={<BookOpen size={18} />} n="01" title="Context, not identity" copy="Academic and learning context help shape the estimate. No name or student ID is needed." />
+          <Step icon={<BarChart3 size={18} />} n="02" title="Patterns with provenance" copy="See which signals mattered and what held-out evaluation can—and cannot—tell us." />
+          <Step icon={<HeartHandshake size={18} />} n="03" title="Support before judgment" copy="Turn a possible area of need into a practical, respectful conversation." />
+        </div>
+      </Card>
+      <div className="flex flex-col gap-5">
+        <Card className="p-5 sm:p-6" testId="card-model-snapshot"><div className="flex items-start justify-between"><div><Eyebrow>Model at a glance</Eyebrow><h2 className="display mt-2 text-2xl font-bold">Show your working.</h2></div><div className="rounded-xl bg-[#EAE7FF] p-2.5 text-[#5B49D6]"><Database size={19} /></div></div>
+          {modelQuery.isLoading ? <div className="mt-5 space-y-3 animate-pulse"><div className="h-4 w-3/4 rounded bg-[#e6e4d9]" /><div className="h-4 w-2/3 rounded bg-[#e6e4d9]" /></div> : modelQuery.isError ? <div className="mt-5"><QueryError onRetry={() => modelQuery.refetch()} /></div> : modelQuery.data ? <div className="mt-5 space-y-3 text-sm">
+            <KeyValue label="Dataset" value={modelQuery.data.datasetName} /><KeyValue label="Method" value={modelQuery.data.algorithm} /><KeyValue label="Target" value={modelQuery.data.target} /><KeyValue label="Held-out split" value={modelQuery.data.split} />
+            <Link href="/evaluate" data-testid="link-explore-evidence" className="mt-3 inline-flex items-center gap-1.5 text-sm font-bold text-[#5B49D6]">Explore the evidence <ArrowUpRight size={15} /></Link>
+          </div> : <p className="mt-4 text-sm text-[#718078]">Evidence details have not been returned.</p>}
+        </Card>
+        <div className="rounded-[20px] border border-[#DDD6FE] bg-[#F5F3FF] p-5 sm:p-6">
+          <div className="flex gap-3"><div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#A78BFA] text-[#31453a]"><CircleHelp size={18} /></div><div><Eyebrow>Keep the human in it</Eyebrow><h3 className="display mt-1 text-xl font-bold text-[#35305F]">What this tool is not</h3><p className="mt-2 text-sm leading-relaxed text-[#5F6280]">It does not diagnose, rank, or explain a student's full circumstances. A person who knows the student should interpret every signal.</p></div></div>
+          <Link href="/evaluate" data-testid="link-model-limits" className="mt-4 inline-flex items-center gap-1.5 text-xs font-bold text-[#5B49D6]">Read model limits <ArrowRight size={14} /></Link>
+        </div>
+      </div>
+    </div>
+    <section className="mt-10">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><Eyebrow>Choose a way in</Eyebrow><h2 className="display mt-1 text-2xl font-bold text-[#24204F]">Small steps, more context.</h2></div><p className="text-xs text-[#777C9A]">No student names are required for any workflow.</p></div>
+      <div className="grid gap-4 md:grid-cols-3">
+        <ActionCard href="/predict" testId="card-action-predict" icon={<Sparkles size={19} />} num="01" title="Explore one estimate" copy="Enter first-term signals, view the estimate, similar-student context, and suggested next steps." />
+        <ActionCard href="/evaluate" testId="card-action-evaluate" icon={<BarChart3 size={19} />} num="02" title="Inspect the evidence" copy="Review held-out test results, compare with a simple baseline, and see influential features." />
+        <ActionCard href="/csv" testId="card-action-csv" icon={<FileSpreadsheet size={19} />} num="03" title="Upload a CSV" copy="Validate a class list, see row-level outcomes and errors, then export the result for careful review." />
+      </div>
+    </section>
+    {modelQuery.data && <div className="mt-7"><ModelNotice model={modelQuery.data} /></div>}
+  </Shell>;
+}
+
+function Step({ icon, n, title, copy }: { icon: ReactNode; n: string; title: string; copy: string }) {
+  return <div className="border-t border-[#E0E2EF] p-5 sm:p-6"><div className="flex items-center gap-3 text-[#6D5CE7]"><span>{icon}</span><span className="mono text-[10px] text-[#9A9CB8]">{n}</span></div><h3 className="mt-3 text-sm font-bold text-[#35305F]">{title}</h3><p className="mt-1.5 text-xs leading-relaxed text-[#718078]">{copy}</p></div>;
+}
+function KeyValue({ label, value }: { label: string; value: string }) { return <div className="flex items-start justify-between gap-3 border-b border-[#e9e7dc] pb-2.5 last:border-0"><span className="text-xs text-[#7a887f]">{label}</span><span className="text-right text-xs font-semibold text-[#38584e]">{value}</span></div>; }
+function ActionCard({ href, testId, icon, num: numberLabel, title, copy }: { href: string; testId: string; icon: ReactNode; num: string; title: string; copy: string }) {
+  return <Link href={href} data-testid={testId} className="group rounded-[18px] border border-[#E0E2EF] bg-white p-5 transition-all hover:-translate-y-0.5 hover:border-[#adc3b2] hover:shadow-[0_9px_24px_rgba(47,69,57,.07)]"><div className="flex items-center justify-between"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#EAE7FF] text-[#5B49D6]">{icon}</span><span className="mono text-[10px] text-[#9295B1]">{numberLabel}</span></div><h3 className="mt-4 font-bold text-[#35305F]">{title}</h3><p className="mt-1.5 min-h-[48px] text-xs leading-relaxed text-[#737895]">{copy}</p><div className="mt-4 flex items-center gap-1 text-xs font-bold text-[#5B49D6]">Open <ArrowRight className="transition-transform group-hover:translate-x-1" size={14} /></div></Link>;
+}
+
+const initialStudent: StudentFeatures = { g1: 10, age: 16, studytime: 2, failures: 0, absences: 2, schoolsup: false, famsup: true, paid: false, higher: true, internet: true, goout: 3, traveltime: 1, health: 4 };
+const numberFields: { key: keyof StudentFeatures; label: string; min: number; max: number; hint: string }[] = [
+  { key: 'g1', label: 'First-period grade', min: 0, max: 20, hint: 'Scale: 0–20' },
+  { key: 'age', label: 'Age', min: 15, max: 22, hint: 'Years' },
+  { key: 'studytime', label: 'Weekly study time', min: 1, max: 4, hint: '1 = under 2 hours · 4 = 10+ hours' },
+  { key: 'failures', label: 'Past class failures', min: 0, max: 4, hint: '0 means none recorded' },
+  { key: 'absences', label: 'Absences', min: 0, max: 93, hint: 'First-term count' },
+  { key: 'goout', label: 'Going out', min: 1, max: 5, hint: '1 = very low · 5 = very high' },
+  { key: 'traveltime', label: 'Travel time', min: 1, max: 4, hint: '1 = under 15 min · 4 = 1+ hour' },
+  { key: 'health', label: 'Self-reported health', min: 1, max: 5, hint: '1 = very poor · 5 = very good' },
+];
+const booleanFields: { key: keyof StudentFeatures; label: string; note: string }[] = [
+  { key: 'schoolsup', label: 'School support', note: 'Extra educational support from school' },
+  { key: 'famsup', label: 'Family support', note: 'Educational support from family' },
+  { key: 'paid', label: 'Extra paid classes', note: 'Additional subject-related classes' },
+  { key: 'higher', label: 'Plans higher education', note: 'Student wants to continue studying' },
+  { key: 'internet', label: 'Internet access at home', note: 'Home internet access' },
+];
+
+type MLMode = 'early' | 'updated';
+
+type MLResult = {
+  mode: MLMode;
+  predictedGrade: number;
+  targetScale: string | number[];
+  model: string;
+  featureCount: number;
+  featuresUsed: string[];
+  dataset: string;
+  datasetRows: number;
+  crossValidationMetrics: { mae: number; rmse: number; r2: number };
+  validatedForKV: boolean;
+  validatedForCBSE: boolean;
+  warning: string;
+};
+
+function PredictPage() {
+  const [student, setStudent] = useState<StudentFeatures>(initialStudent);
+  const [mlMode, setMlMode] = useState<MLMode>('updated');
+  const [mlResult, setMlResult] = useState<MLResult | null>(null);
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlError, setMlError] = useState('');
+  const { selection, subjects, setClassLevel, setStream, setSubject } = useCurriculum();
+  const prediction = usePredictStudentPerformance();
+  const model = useGetStudentPerformanceModel({ query: { queryKey: getGetStudentPerformanceModelQueryKey() } });
+  const rawResult = prediction.data as PredictionResult | undefined;
+  const result = rawResult && rawResult.classLevel === selection.classLevel && rawResult.subject === selection.subject && rawResult.stream === selection.stream ? rawResult : undefined;
+  const modelSupport = findModelSupport(model.data?.modelSupport, selection);
+  const canPredict = Boolean(modelSupport);
+  const updateNumber = (key: keyof StudentFeatures, value: string, min: number, max: number) => {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) setStudent((old) => ({ ...old, [key]: Math.max(min, Math.min(max, parsed)) }));
+  };
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canPredict) return;
+    const payload: PredictionInput = { classLevel: selection.classLevel, stream: selection.stream, subject: selection.subject, student };
+    prediction.mutate({ data: payload });
+  };
+
+  const submitMLPrediction = async () => {
+    setMlLoading(true);
+    setMlError('');
+    setMlResult(null);
+
+    const { g1, ...studentWithoutG1 } = student;
+    const mlStudent = mlMode === 'updated'
+      ? { ...studentWithoutG1, g1 }
+      : studentWithoutG1;
+
+    try {
+      const response = await fetch('/api/ml-prediction/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: mlMode, student: mlStudent }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.error === 'string'
+            ? data.error
+            : 'The experimental prediction could not be generated.'
+        );
+      }
+
+      setMlResult(data as MLResult);
+    } catch (error) {
+      setMlError(
+        error instanceof Error
+          ? error.message
+          : 'Could not connect to the experimental ML service.'
+      );
+    } finally {
+      setMlLoading(false);
+    }
+  };
+  return <Shell><PageHeading eyebrow="Individual estimate / 01" title="Start with what you know." description="Enter first-period context to see an estimated final grade, how it was informed, and a few grounded ways to offer support. A result is not a judgment of a student's potential." action={<div className="flex items-center gap-2 rounded-full border border-[#d9ddcf] bg-[#F0EEFF] px-3 py-2 text-xs font-semibold text-[#5142B5]"><ShieldCheck size={15} /> No identifying details</div>} />
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(330px,.88fr)]">
+      <Card className="p-5 sm:p-7" testId="panel-student-form">
+          <div className="mb-6 flex items-start justify-between gap-4"><div><Eyebrow>First-term context</Eyebrow><h2 className="display mt-1 text-2xl font-bold">A little context goes a long way.</h2><p className="mt-2 text-xs leading-relaxed text-[#748178]">Example starting values are prefilled; edit them to match the record. Inputs are limited to the model's published features.</p></div><div className="hidden rounded-xl bg-[#EAE7FF] p-2.5 text-[#5B49D6] sm:block"><BookOpen size={20} /></div></div>
+        <form onSubmit={submit} data-testid="form-student-prediction">
+          <div className="mb-6 grid gap-4 rounded-xl border border-[#E0E2EF] bg-[#F7F7FC] p-4 sm:grid-cols-2">
+            <label className="block"><span className="block text-xs font-bold text-[#49466F]">Class</span><select data-testid="select-class" value={selection.classLevel} onChange={(e) => setClassLevel(Number(e.target.value))} className="field mt-2">{Array.from({ length: 12 }, (_, i) => i + 1).map((level) => <option key={level} value={level}>{classLabel(level)}</option>)}</select></label>
+            {selection.classLevel >= 11 && <label className="block"><span className="block text-xs font-bold text-[#49466F]">Stream</span><select data-testid="select-stream" value={selection.stream ?? 'science'} onChange={(e) => setStream(e.target.value as SchoolStream)} className="field mt-2">{SCHOOL_STREAMS.map((stream) => <option key={stream} value={stream}>{STREAM_LABELS[stream]}</option>)}</select></label>}
+            <label className="block sm:col-span-2"><span className="block text-xs font-bold text-[#49466F]">Subject</span><select id="subject-select" data-testid="select-subject" value={selection.subject} onChange={(e) => setSubject(e.target.value)} className="field mt-2">{subjects.map((subject) => <option key={subject} value={subject}>{subject}</option>)}</select><p className="mt-1.5 text-[11px] text-[#777C9A]">Curriculum choices are configurable and may vary by KV. Only subjects with an evaluated model can generate estimates.</p></label>
+          </div>
+          {!canPredict && <div data-testid="status-model-unsupported" role="status" className="mb-5 rounded-xl border border-[#DDD6FE] bg-[#F5F3FF] p-4 text-xs leading-relaxed text-[#5F6280]"><strong>Prediction not available yet.</strong> There is no evaluated model for {classLabel(selection.classLevel)}, {selection.subject}{selection.stream ? ` (${STREAM_LABELS[selection.stream]})` : ''}. The curriculum option remains visible, but EduPredict will not substitute a different subject's model.</div>}
+          <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
+            {numberFields.map(({ key, label, min, max, hint }) => <label key={key} className="block"><span className="flex items-center justify-between gap-2 text-xs font-semibold text-[#49466F]"><span>{label}</span><span className="mono text-[10px] font-normal text-[#9295B1]">{hint}</span></span><input data-testid={`input-${key}`} aria-label={label} className="field mt-2" type="number" min={min} max={max} step="1" value={student[key] as number} onChange={(e) => updateNumber(key, e.target.value, min, max)} /></label>)}
+          </div>
+          <div className="my-6 border-t border-[#E0E2EF]" />
+          <div className="mb-3"><Eyebrow>Support & access</Eyebrow><p className="mt-1 text-xs text-[#7a877d]">These context signals describe support and access—not student effort or worth.</p></div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {booleanFields.map(({ key, label, note }) => <label key={key} data-testid={`field-${key}`} className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#e3e1d7] bg-[#F7F7FC] p-3.5 transition-colors hover:border-[#B9B0FF]"><input data-testid={`input-${key}`} type="checkbox" checked={student[key] as boolean} onChange={(e) => setStudent((old) => ({ ...old, [key]: e.target.checked }))} className="mt-0.5 h-4 w-4 accent-[#725CFF]" /><span><span className="block text-xs font-semibold text-[#40594e]">{label}</span><span className="mt-1 block text-[10px] leading-relaxed text-[#7c8980]">{note}</span></span></label>)}
+          </div>
+          <div className="mt-6 border-t border-[#E0E2EF] pt-5">
+            <p className="mb-3 text-[11px] leading-relaxed text-[#7c8980]">
+              The original curriculum model remains available above. You can also try the separate experimental ML model below.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+              <label className="block">
+                <span className="block text-xs font-bold text-[#49466F]">Experimental ML mode</span>
+                <select
+                  data-testid="select-ml-mode"
+                  value={mlMode}
+                  onChange={(event) => {
+                    setMlMode(event.target.value as MLMode);
+                    setMlResult(null);
+                    setMlError('');
+                  }}
+                  className="field mt-2"
+                >
+                  <option value="early">Early prediction — without first-period grade</option>
+                  <option value="updated">Updated prediction — includes first-period grade</option>
+                </select>
+              </label>
+              <button
+                data-testid="button-submit-ml-prediction"
+                type="button"
+                disabled={mlLoading}
+                onClick={submitMLPrediction}
+                className="btn-primary inline-flex items-center justify-center gap-2"
+              >
+                {mlLoading
+                  ? <><LoaderCircle className="animate-spin" size={16} /> Estimating</>
+                  : <>Try experimental ML <ArrowRight size={16} /></>}
+              </button>
+            </div>
+            <p className="mt-2 text-[10px] leading-relaxed text-[#8a6949]">
+              Research prototype using Portuguese student data; not validated for KV or CBSE.
+            </p>
+          </div>
+          {mlError && <div data-testid="status-ml-error" role="alert" className="mt-4 rounded-xl border border-[#e5c6bc] bg-[#fbefea] p-3 text-sm text-[#784f43]">{mlError}</div>}
+          {prediction.isError && <div data-testid="status-prediction-error" role="alert" className="mt-4 rounded-xl border border-[#e5c6bc] bg-[#fbefea] p-3 text-sm text-[#784f43]">The estimate could not be generated. Please check your connection and try again.</div>}
+        </form>
+      </Card>
+      <div className="space-y-5">
+        {mlResult && <Card className="overflow-hidden" testId="panel-ml-prediction-result">
+          <div className="bg-gradient-to-br from-[#24204F] to-[#171B3B] px-5 py-5 text-white sm:px-6">
+            <div className="text-xs font-semibold uppercase tracking-wider text-indigo-200">
+              Experimental ML · {mlResult.mode === 'early' ? 'Early prediction' : 'Updated prediction'}
+            </div>
+            <h2 className="display mt-2 text-2xl font-bold">Estimated final grade</h2>
+            <div className="mt-5 flex items-end gap-3">
+              <span data-testid="text-ml-predicted-grade" className="display text-[58px] font-bold leading-none">
+                {num(mlResult.predictedGrade, 1)}
+              </span>
+              <span className="pb-1 text-sm text-indigo-100">out of 20</span>
+            </div>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/20">
+              <div className="h-full rounded-full bg-[#A78BFA]" style={{ width: `${Math.max(0, Math.min(100, mlResult.predictedGrade / 20 * 100))}%` }} />
+            </div>
+          </div>
+          <div className="space-y-4 p-5 sm:p-6">
+            <KeyValue label="Algorithm" value={mlResult.model} />
+            <KeyValue label="Features used" value={String(mlResult.featureCount)} />
+            <KeyValue label="Training dataset" value={`${mlResult.dataset} (${mlResult.datasetRows} records)`} />
+            <div>
+              <Eyebrow>5-fold cross-validation</Eyebrow>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="rounded-xl bg-[#F4F3FF] p-3">
+                  <div className="text-[10px] text-[#777C9A]">MAE</div>
+                  <div className="mono mt-1 text-lg font-bold text-[#35305F]">{num(mlResult.crossValidationMetrics.mae, 2)}</div>
+                </div>
+                <div className="rounded-xl bg-[#F4F3FF] p-3">
+                  <div className="text-[10px] text-[#777C9A]">RMSE</div>
+                  <div className="mono mt-1 text-lg font-bold text-[#35305F]">{num(mlResult.crossValidationMetrics.rmse, 2)}</div>
+                </div>
+                <div className="rounded-xl bg-[#F4F3FF] p-3">
+                  <div className="text-[10px] text-[#777C9A]">R²</div>
+                  <div className="mono mt-1 text-lg font-bold text-[#35305F]">{num(mlResult.crossValidationMetrics.r2, 2)}</div>
+                </div>
+              </div>
+              <p className="mt-2 text-[10px] leading-relaxed text-[#777C9A]">
+                MAE and RMSE are grade-point error measures (lower is better). R² describes model fit on evaluation data; it is not a confidence score.
+              </p>
+            </div>
+            <div role="note" data-testid="text-ml-warning" className="rounded-xl border border-[#ead2b5] bg-[#faf0df] p-4 text-xs leading-relaxed text-[#695c49]">
+              <strong>Important limitation:</strong> {mlResult.warning}
+              <p className="mt-2">This research model is not validated for KV or CBSE students. Do not use this estimate alone to make decisions about a student.</p>
+            </div>
+          </div>
+        </Card>}
+        {result ? <PredictionOutcome result={result} model={model.data} /> : <div className="rounded-[20px] border border-[#d9dfd4] bg-[#F0EEFF] p-6 sm:p-7" data-testid="panel-prediction-empty">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#EAE7FF] text-[#5B49D6]"><Lightbulb size={21} /></div><Eyebrow>What happens next</Eyebrow><h2 className="display mt-2 text-2xl font-bold text-[#35305F]">A result with its context attached.</h2><p className="mt-3 text-sm leading-relaxed text-[#666A88]">After submitting, you will see the estimate alongside similar-student context, contributing signals, and practical prompts for a supportive conversation.</p>
+          <div className="mt-6 space-y-3">{['A grade estimate, not a promise', 'Patterns from comparable records', 'Signals and plain-language explanations', 'Ways to offer support without blame'].map((item, i) => <div key={item} className="flex items-center gap-3 text-xs text-[#5F6280]"><span className="mono text-[10px] text-[#9a9e88]">0{i + 1}</span>{item}</div>)}</div>
+        </div>}
+        <ModelNotice model={model.data} compact />
+      </div>
+    </div>
+  </Shell>;
+}
+
+function PredictionOutcome({ result, model }: { result: PredictionResult; model?: ModelOverview }) {
+  const gradePosition = Math.min(100, Math.max(0, (result.predictedGrade / 20) * 100));
+  const bandCopy: Record<string, string> = { needs_support: 'A signal to check in and explore what support might help.', developing: 'A place to notice progress and ask what would help next.', on_track: 'A positive signal, while staying curious about the whole picture.' };
+  const actions = [
+    result.topSignals?.some((s) => /absence|failure|fail/i.test(`${s.feature} ${s.explanation}`)) ? 'Ask privately whether attendance, coursework, or something outside class is getting in the way.' : 'Ask the student what is helping their learning feel manageable right now.',
+    result.topSignals?.some((s) => s.direction === 'positive') ? 'Name a specific strength or routine the student can keep building on.' : 'Agree on one small, concrete next step together, then check back in.',
+    'Offer a choice of support and let the student decide what feels useful.',
+  ];
+  return <Card className="overflow-hidden" testId="panel-prediction-result">
+    <div className="bg-gradient-to-br from-[#24204F] to-[#171B3B] px-5 py-5 text-white sm:px-6"><div className="flex items-start justify-between"><div><Eyebrow>Estimate / {result.subject} · {classLabel(result.classLevel)}</Eyebrow><h2 className="display mt-1 text-2xl font-bold">A starting point, not a label.</h2></div><Sparkles className="text-[#ed9b63]" size={20} /></div><div className="mt-6 flex items-end gap-3"><span data-testid="text-predicted-grade" className="display text-[58px] font-bold leading-none">{num(result.predictedGrade, 1)}</span><span className="pb-1 text-sm text-indigo-100">out of 20</span></div><div className="mt-4 h-2 overflow-hidden rounded-full bg-white/20"><div className="h-full rounded-full bg-[#A78BFA] transition-all duration-700" style={{ width: `${gradePosition}%` }} /></div><div className="mt-2 flex justify-between text-[10px] text-indigo-100"><span>0</span><span>10</span><span>20</span></div><div className="mt-4 inline-flex rounded-full bg-[#EAE7FF] px-3 py-1.5 text-xs font-bold capitalize text-[#4934C8]" data-testid="text-grade-band">{formatBand(result.gradeBand)}</div><p className="mt-2 text-xs text-indigo-100">{bandCopy[result.gradeBand] ?? 'An estimate to inform a supportive conversation.'}</p></div>
+    <div className="space-y-5 p-5 sm:p-6">
+      <div className="grid grid-cols-2 gap-3"><div className="rounded-xl bg-[#F4F3FF] p-3.5"><Eyebrow>Similar records</Eyebrow><div data-testid="text-neighbor-count" className="display mt-1 text-2xl font-bold text-[#35305F]">{result.neighborCount}</div><div className="text-[10px] text-[#7b887f]">used for context</div></div><div className="rounded-xl bg-[#F4F3FF] p-3.5"><Eyebrow>Pass share</Eyebrow><div data-testid="text-pass-share" className="display mt-1 text-2xl font-bold text-[#35305F]">{Math.round(result.similarStudentPassShare * 100)}<span className="text-sm">%</span></div><div className="text-[10px] text-[#7b887f]">among similar records</div></div></div>
+      <div><div className="flex items-center justify-between"><h3 className="text-sm font-bold text-[#35305F]">A little perspective</h3><span className="text-[10px] text-[#859087]">Similar-student grade range</span></div><div className="mt-3 flex flex-wrap items-center gap-2">{result.similarStudentGradeRange?.length ? result.similarStudentGradeRange.map((grade, i) => <span key={`${grade}-${i}`} data-testid={`tag-grade-range-${i}`} className="mono rounded-lg border border-[#dbe0d2] bg-[#F7F7FC] px-2.5 py-1.5 text-xs text-[#5F6280]">{num(grade, 1)}</span>) : <span className="text-xs text-[#859087]">Range not provided.</span>}<span className="text-[10px] text-[#78867c]">No individual outcome is guaranteed.</span></div></div>
+       {result.topSignals?.length > 0 && <div><h3 className="mb-2 text-sm font-bold text-[#35305F]">Input context to discuss</h3><div className="space-y-2">{result.topSignals.map((signal, index) => <div key={`${signal.feature}-${index}`} data-testid={`signal-row-${index}`} className="flex gap-3 rounded-xl border border-[#e5e3d9] p-3"><span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${signal.direction === 'positive' ? 'bg-[#725CFF]' : 'bg-[#df9961]'}`} /><div className="min-w-0"><div className="flex flex-wrap items-baseline justify-between gap-x-2"><span className="text-xs font-bold text-[#415b50]">{signal.feature}</span><span className="text-[10px] text-[#7b897e]">{signal.value}</span></div><p className="mt-1 text-[11px] leading-relaxed text-[#718078]">{signal.explanation}</p></div></div>)}</div></div>}
+      <div className="rounded-xl border border-[#ead2b5] bg-[#faf0df] p-4"><div className="flex items-center gap-2 text-[#836343]"><Lightbulb size={16} /><h3 className="text-xs font-bold">Practical next steps</h3></div><ul className="mt-2 space-y-2">{actions.map((action, index) => <li key={action} data-testid={`recommendation-${index}`} className="flex gap-2 text-[11px] leading-relaxed text-[#695c49]"><Check className="mt-0.5 shrink-0 text-[#62816a]" size={13} />{action}</li>)}</ul></div>
+      <ModelNotice model={model} compact />
+    </div>
+  </Card>;
+}
+
+function EvaluatePage() {
+  const query = useGetStudentPerformanceModel({ query: { queryKey: getGetStudentPerformanceModelQueryKey() } });
+  const model = query.data;
+  return <Shell><PageHeading eyebrow="Model evidence / 02" title="Look under the hood." description="A useful estimate needs a visible evidence trail. Review the source, evaluation setup, held-out performance, and what the model's metrics leave out." />
+    {query.isLoading ? <LoadingPanel /> : query.isError ? <QueryError onRetry={() => query.refetch()} /> : !model ? <div data-testid="status-model-empty" className="rounded-xl border border-[#E0E2EF] bg-white p-6 text-sm text-[#718078]">No model overview was returned.</div> : <div className="space-y-5">
+      <ModelNotice model={model} />
+      <Card className="p-5 sm:p-6" testId="panel-model-support"><Eyebrow>Available model scope</Eyebrow><h2 className="display mt-1 text-xl font-bold">Curriculum options are broader than model coverage.</h2><p className="mt-2 text-xs leading-relaxed text-[#758279]">The curriculum list is a configurable KV/CBSE starting point. It is not evidence that a model exists for each subject. Only the combinations listed below may produce estimates.</p><div className="mt-4 space-y-3">{model.modelSupport.map((support) => <div key={support.modelId} className="rounded-xl border border-[#dce0d4] bg-[#f5f4ec] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-sm text-[#36584d]">{support.subject}</strong><span className="rounded-full bg-[#e6ebe2] px-2.5 py-1 text-[10px] font-semibold text-[#587468]">{support.classLevels.map(classLabel).join(', ')}</span></div><p className="mt-2 text-xs leading-relaxed text-[#6d7c71]">{support.scope}</p><p className="mt-2 text-[10px] font-semibold text-[#8a6949]">{support.kvValidated ? 'Validated for KV' : 'Not validated for KV schools'}</p></div>)}</div></Card>
+      <div className="grid gap-5 xl:grid-cols-[.82fr_1.18fr]">
+        <Card className="p-5 sm:p-6" testId="panel-dataset-provenance"><div className="flex items-start justify-between"><div><Eyebrow>Data provenance</Eyebrow><h2 className="display mt-1 text-2xl font-bold">Know where it comes from.</h2></div><Database className="text-[#4e8172]" size={20} /></div>
+          <div className="mt-5 space-y-3"><KeyValue label="Dataset" value={model.datasetName} /><KeyValue label="Target" value={model.target} /><KeyValue label="License" value={model.license} /><KeyValue label="Method" value={model.algorithm} /><KeyValue label="Split" value={model.split} /><KeyValue label="Seed" value={String(model.seed)} /></div>
+          <div className="mt-5 rounded-xl bg-[#F4F3FF] p-4"><Eyebrow>Dataset source</Eyebrow><a data-testid="link-dataset-source" href={model.sourceUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex max-w-full items-start gap-2 break-all text-xs font-semibold text-[#356f62] underline decoration-[#abc0b3] underline-offset-4">{model.sourceUrl}<ArrowUpRight className="shrink-0" size={14} /></a>{model.doi && <p className="mono mt-3 break-all text-[10px] text-[#758279]">DOI · {model.doi}</p>}</div>
+        </Card>
+         <Card className="p-5 sm:p-6" testId="panel-evaluation"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><Eyebrow>Held-out evaluation</Eyebrow><h2 className="display mt-1 text-2xl font-bold">How does it perform?</h2><p className="mt-2 max-w-lg text-xs leading-relaxed text-[#758279]">Test results describe performance on held-out records—not certainty for any individual student. Compare error with the provided baseline.</p></div><div className="rounded-xl bg-[#F0EEFF] p-2.5 text-[#3c7566]"><BarChart3 size={20} /></div></div>
+           <div className="mt-5 space-y-5">{model.evaluations?.map((evaluation, i) => <div key={`${evaluation.subject}-${i}`} data-testid={`evaluation-${evaluation.subject.toLowerCase().replaceAll(' ', '-')}`} className="rounded-xl border border-[#e1dfd4] bg-[#f8f7f0] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-[#36584d]">{evaluation.subject}</h3><span className="mono rounded-full bg-[#e6ebe2] px-2.5 py-1 text-[10px] text-[#587468]">{evaluation.testRows} held out / {evaluation.rows} total</span></div>
+              <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">{[
+                ['MAE', evaluation.mae, 'baseline', evaluation.baselineMae],
+                ['RMSE', evaluation.rmse, 'baseline', evaluation.baselineRmse],
+                ['R²', evaluation.r2, '', undefined],
+                ['Pass accuracy', evaluation.passAccuracy, '', undefined],
+                ['Pass precision', evaluation.passPrecision, '', undefined],
+                ['Pass recall', evaluation.passRecall, '', undefined],
+                ['Pass F1', evaluation.passF1, '', undefined],
+              ].map(([label, val, baselineLabel, baselineVal]) => <div key={String(label)} data-testid={`metric-${evaluation.subject.toLowerCase().replaceAll(' ', '-')}-${String(label).toLowerCase().replaceAll(' ', '-')}`}><div className="text-[10px] text-[#849087]">{String(label)}</div><div className="mono mt-0.5 text-sm font-medium text-[#36584d]">{num(Number(val), 3)}</div>{baselineLabel && <div className="text-[9px] text-[#89938a]">baseline {num(Number(baselineVal), 3)}</div>}</div>)}</div>
+               {evaluation.featureImportance?.length > 0 && <div className="mt-5 border-t border-[#e4e2d7] pt-4"><div className="mb-3 flex items-center justify-between"><Eyebrow>Feature importance</Eyebrow><span className="text-[9px] text-[#89938a]">MAE increase after permutation</span></div><ImportanceList items={evaluation.featureImportance} id={evaluation.subject.toLowerCase().replaceAll(' ', '-')} /></div>}
+            </div>)}</div>
+        </Card>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
+        <Card className="p-5 sm:p-6" testId="panel-model-features"><Eyebrow>Signals available to the model</Eyebrow><h2 className="display mt-1 text-xl font-bold">What goes into the estimate.</h2><div className="mt-4 flex flex-wrap gap-2">{model.features?.map((feature, i) => <span data-testid={`feature-tag-${i}`} key={feature} className="mono rounded-full border border-[#dce0d4] bg-[#F4F3FF] px-3 py-1.5 text-[10px] text-[#536b5f]">{feature}</span>)}</div></Card>
+        <div className="rounded-[20px] border border-[#DDD6FE] bg-[#F5F3FF] p-5 sm:p-6" data-testid="panel-how-to-read"><Eyebrow>Read metrics with care</Eyebrow><h2 className="display mt-1 text-xl font-bold text-[#544936]">A metric is not a student.</h2><ul className="mt-4 space-y-3 text-xs leading-relaxed text-[#5F6280]"><li><strong>MAE / RMSE:</strong> average and larger grade errors, in grade points. Lower is better; neither reveals every miss.</li><li><strong>R²:</strong> how much variation the model explains in this test set. It is not a confidence score.</li><li><strong>Pass metrics:</strong> describe a thresholded outcome, not the richness of a student's learning.</li><li><strong>Feature importance:</strong> association in this model, not proof that a signal causes an outcome.</li></ul><p className="mt-4 border-t border-[#e7cfac] pt-3 text-[11px] font-semibold text-[#755d3d]">Keep human context, student voice, and equitable support in the decision.</p></div>
+      </div>
+      <div className="rounded-xl border border-[#d7dfd2] bg-[#edf2e9] p-4 text-xs leading-relaxed text-[#566d60]" data-testid="text-evaluation-caveat"><Info className="mr-2 inline-block align-[-3px] text-[#3b7766]" size={15} />These evaluations summarize the dataset and split provided by the model service. They do not establish fairness across groups, causality, or suitability for high-stakes decisions.</div>
+    </div>}
+  </Shell>;
+}
+
+function ImportanceList({ items, id }: { items: { feature: string; label: string; importance: number }[]; id: string }) {
+  const max = Math.max(...items.map((item) => item.importance), 0.0001);
+  return <div className="space-y-2.5">{items.map((item, i) => <div key={`${item.feature}-${i}`} data-testid={`importance-${id}-${i}`} className="grid grid-cols-[minmax(84px,1fr)_minmax(100px,1.7fr)_40px] items-center gap-3"><span className="truncate text-[10px] text-[#65776b]" title={item.label}>{item.label || item.feature}</span><div className="h-1.5 overflow-hidden rounded-full bg-[#e4e5d9]"><div className="h-full rounded-full bg-[#498274] transition-[width] duration-500" style={{ width: `${Math.max(3, (item.importance / max) * 100)}%` }} /></div><span className="mono text-right text-[9px] text-[#859188]">{num(item.importance, 3)}</span></div>)}</div>;
+}
+
+function CsvPage() {
+  const [csvText, setCsvText] = useState('');
+  const [fileName, setFileName] = useState('');
+  const mutation = usePredictStudentPerformanceCsv();
+  const model = useGetStudentPerformanceModel({ query: { queryKey: getGetStudentPerformanceModelQueryKey() } });
+  const result = mutation.data as CsvPredictionResult | undefined;
+  const handleFile = async (file?: File) => {
+    if (!file) return;
+    setFileName(file.name);
+    setCsvText(await file.text());
+    mutation.reset();
+  };
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    mutation.mutate({ data: { csvText } });
+  };
+  const exportCsv = () => {
+    if (!result) return;
+    const blob = new Blob([serializeCsvResults(result)], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'edupredict-row-results.csv';
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return <Shell><PageHeading eyebrow="CSV review / 03" title="See every row clearly." description="Upload a CSV of first-term signals to validate rows and review estimates side by side. Errors stay visible, and each result keeps its uncertainty in view." action={<div className="flex items-center gap-2 rounded-full border border-[#d9ddcf] bg-[#F0EEFF] px-3 py-2 text-xs font-semibold text-[#5142B5]"><FileSpreadsheet size={15} /> Row-level review</div>} />
+    <div className="grid gap-6 xl:grid-cols-[.76fr_1.24fr]">
+      <div className="space-y-5">
+        <Card className="p-5 sm:p-6" testId="panel-csv-upload"><div className="flex items-start justify-between"><div><Eyebrow>Input data</Eyebrow><h2 className="display mt-1 text-2xl font-bold">Upload a class CSV.</h2></div><Upload size={20} className="text-[#478071]" /></div>
+          <p className="mt-2 text-xs leading-relaxed text-[#758279]">Upload a CSV with class, stream, subject, and the model's documented feature columns. Each row is checked independently; unsupported class-subject combinations are returned as row errors rather than estimates.</p>
+          <form onSubmit={submit} className="mt-5 space-y-4" data-testid="form-csv-prediction">
+            <label htmlFor="csv-file" data-testid="dropzone-csv" className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-[#aabeb0] bg-[#f1f3ea] px-5 py-6 text-center transition-colors hover:border-[#558b7b] hover:bg-[#edf1e6]"><span className="grid h-10 w-10 place-items-center rounded-full bg-[#dfe9db] text-[#3e7667]"><Upload size={18} /></span><span className="mt-3 text-sm font-bold text-[#3b5b50]">Choose a CSV file</span><span className="mt-1 text-[10px] text-[#7c897f]">{fileName || 'or paste CSV data below · up to 2 MB'}</span><input id="csv-file" data-testid="input-csv-file" type="file" accept=".csv,text/csv" className="sr-only" onChange={(e) => void handleFile(e.target.files?.[0])} /></label>
+            <label className="block"><span className="flex items-center justify-between text-xs font-bold text-[#49466F]"><span>CSV content</span><span className="mono font-normal text-[10px] text-[#9295B1]">{csvText.length.toLocaleString()} chars</span></span><textarea data-testid="textarea-csv" value={csvText} onChange={(e) => { setCsvText(e.target.value); setFileName(''); mutation.reset(); }} rows={10} maxLength={2000000} placeholder="student_id,class,stream,subject,previous_marks,age,study_time,failures,absences,school_support,family_support,paid_classes,higher_education_intent,internet_access,go_out,travel_time,health&#10;KV-001,IX,,Mathematics,12,16,2,0,4,no,yes,no,yes,yes,3,1,4" className="field mono mt-2 resize-y text-[11px] leading-relaxed" /></label>
+            <div className="flex flex-wrap gap-2"><button data-testid="button-run-csv" type="submit" disabled={mutation.isPending || !csvText.trim()} className="btn-primary inline-flex flex-1 items-center justify-center gap-2">{mutation.isPending ? <><LoaderCircle className="animate-spin" size={16} /> Checking rows</> : <>Validate & estimate <ArrowRight size={15} /></>}</button><button data-testid="button-clear-csv" type="button" onClick={() => { setCsvText(''); setFileName(''); mutation.reset(); }} className="btn-quiet">Clear</button></div>
+            {mutation.isError && <div data-testid="status-csv-error" role="alert" className="rounded-xl border border-[#e5c6bc] bg-[#fbefea] p-3 text-xs text-[#784f43]">We could not process this CSV. Check the format and try again.</div>}
+          </form>
+        </Card>
+        <div className="rounded-[20px] border border-[#DDD6FE] bg-[#F5F3FF] p-5" data-testid="panel-csv-format"><Eyebrow>Format guide</Eyebrow><h3 className="display mt-1 text-xl font-bold text-[#544936]">One row per student. No names.</h3><p className="mt-2 text-xs leading-relaxed text-[#5F6280]">Use the feature names shown in Model evidence. Keep header names and values aligned; valid and invalid rows will be reported separately.</p><div className="mt-3 flex flex-wrap gap-4"><Link href="/evaluate" data-testid="link-csv-features" className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5B49D6]">View supported features <ArrowRight size={14} /></Link><button type="button" data-testid="button-download-csv-template" onClick={() => { const template = 'student_id,class,stream,subject,previous_marks,age,study_time,failures,absences,school_support,family_support,paid_classes,higher_education_intent,internet_access,go_out,travel_time,health\r\nKV-001,IX,,Mathematics,12,16,2,0,4,no,yes,no,yes,yes,3,1,4\r\n'; const url = URL.createObjectURL(new Blob([template], { type: 'text/csv;charset=utf-8' })); const a = document.createElement('a'); a.href = url; a.download = 'edupredict-kv-template.csv'; a.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }} className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5B49D6]"><ArrowDownToLine size={14} /> Download CSV template</button></div></div>
+        <ModelNotice model={model.data} compact />
+      </div>
+      <div>
+        {result ? <CsvResults result={result} onExport={exportCsv} /> : <Card className="flex min-h-[360px] flex-col items-center justify-center p-7 text-center" testId="panel-csv-empty"><div className="grid h-14 w-14 place-items-center rounded-2xl bg-[#e7ede2] text-[#3d7869]"><Users size={24} /></div><Eyebrow>Results appear here</Eyebrow><h2 className="display mt-2 text-2xl font-bold">Every row gets a clear answer.</h2><p className="mt-2 max-w-sm text-sm leading-relaxed text-[#718078]">After validation, review predicted grades, similar-student pass share, and row-specific errors in one table.</p><div className="mt-6 flex flex-wrap justify-center gap-2 text-[10px] text-[#61766b]"><span className="rounded-full bg-[#edf1e8] px-3 py-1.5">Valid rows retained</span><span className="rounded-full bg-[#fbf0df] px-3 py-1.5">Errors are not hidden</span><span className="rounded-full bg-[#edf1e8] px-3 py-1.5">Exportable results</span></div></Card>}
+      </div>
+    </div>
+  </Shell>;
+}
+
+function CsvResults({ result, onExport }: { result: CsvPredictionResult; onExport: () => void }) {
+  const sorted = useMemo(() => [...result.predictions].sort((a, b) => a.rowNumber - b.rowNumber), [result.predictions]);
+  return <Card className="overflow-hidden" testId="panel-csv-results">
+    <div className="flex flex-col gap-4 border-b border-[#E0E2EF] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6"><div><Eyebrow>Processed class list</Eyebrow><h2 className="display mt-1 text-2xl font-bold">Review each record.</h2></div><button data-testid="button-export-csv" onClick={onExport} className="btn-quiet inline-flex items-center justify-center gap-2"><ArrowDownToLine size={15} /> Export results</button></div>
+    <div className="grid grid-cols-2 border-b border-[#E0E2EF] sm:grid-cols-4"><Summary label="Valid rows" value={result.validCount} color="green" testId="text-valid-count" /><Summary label="Errors" value={result.errorCount} color="orange" testId="text-error-count" /><Summary label="Returned estimates" value={result.predictions.length} color="green" testId="text-prediction-count" /><Summary label="Returned errors" value={result.errors.length} color="orange" testId="text-error-rows-count" /></div>
+    {sorted.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[580px] border-collapse text-left text-xs"><thead><tr className="bg-[#F4F3FF] text-[10px] uppercase tracking-wider text-[#777C9A]"><th className="px-5 py-3 font-bold">Row</th><th className="px-4 py-3 font-bold">Estimated grade</th><th className="px-4 py-3 font-bold">Grade band</th><th className="px-4 py-3 font-bold">Similar-record pass share</th><th className="px-5 py-3 font-bold">Status</th></tr></thead><tbody>{sorted.map((row) => <tr key={row.rowNumber} data-testid={`row-csv-result-${row.rowNumber}`} className="border-t border-[#ece9df]"><td className="mono px-5 py-3.5 text-[#6f7c71]">{row.rowNumber}</td><td className="mono px-4 py-3.5 font-semibold text-[#5142B5]">{num(row.predictedGrade, 1)} / 20</td><td className="px-4 py-3.5 capitalize text-[#5F6280]">{formatBand(row.gradeBand)}</td><td className="mono px-4 py-3.5 text-[#5F6280]">{Math.round(row.similarStudentPassShare * 100)}%</td><td className="px-5 py-3.5"><span className="rounded-full bg-[#EAE7FF] px-2.5 py-1 text-[10px] font-semibold text-[#5142B5]">Valid</span></td></tr>)}</tbody></table></div>}
+    {result.errors.length > 0 && <div className="border-t border-[#E0E2EF] p-5 sm:p-6"><h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-[#754e40]"><Info size={15} /> Rows needing attention</h3><div className="space-y-2">{result.errors.map((error, i) => <div key={`${error.rowNumber}-${i}`} data-testid={`row-csv-error-${error.rowNumber}`} className="flex flex-col gap-1 rounded-xl border border-[#eed8cd] bg-[#fbf1ec] px-3.5 py-3 sm:flex-row sm:items-start sm:gap-4"><span className="mono shrink-0 text-[10px] font-medium text-[#9a6551]">Row {error.rowNumber}</span><span className="text-xs leading-relaxed text-[#74574b]">{error.message}</span></div>)}</div></div>}
+    {!result.predictions.length && !result.errors.length && <div data-testid="status-csv-no-rows" className="p-8 text-center text-sm text-[#78867c]">No row outcomes were returned.</div>}
+    <div className="border-t border-[#E0E2EF] bg-[#F4F3FF] p-4"><p className="flex gap-2 text-[11px] leading-relaxed text-[#666A88]"><ShieldCheck size={15} className="shrink-0 text-[#43806e]" />Row-level estimates are uncertain and based on similar historical records. Review errors and discuss any result with care before taking action.</p></div>
+  </Card>;
+}
+
+function Summary({ label, value, color, testId }: { label: string; value: number; color: 'green' | 'orange'; testId: string }) {
+  return <div className="border-b border-r border-[#e7e4d9] px-4 py-4 last:border-r-0 sm:border-b-0 sm:px-5"><div className="text-[10px] text-[#839087]">{label}</div><div data-testid={testId} className={`display mt-1 text-2xl font-bold ${color === 'green' ? 'text-[#5B49D6]' : 'text-[#C17A43]'}`}>{value}</div></div>;
+}
+
+function CurriculumPage() {
+  const { curriculum, saveSubjects, resetCurriculum } = useCurriculum();
+  const [classLevel, setClassLevel] = useState(9);
+  const [stream, setStream] = useState<SchoolStream>('science');
+  const [text, setText] = useState('');
+  const [saved, setSaved] = useState(false);
+  const activeStream = classLevel >= 11 ? stream : null;
+  const entry = getCurriculumEntry(curriculum, classLevel, activeStream);
+  useEffect(() => { setText(entry?.subjects.join('\n') ?? ''); setSaved(false); }, [classLevel, activeStream, curriculum, entry]);
+  const save = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const subjects = [...new Set(text.split(/\r?\n/).map((subject) => subject.trim()).filter(Boolean))];
+    if (!subjects.length || subjects.some((subject) => subject.length > 80) || subjects.length > 40) return;
+    saveSubjects(classLevel, activeStream, subjects);
+    setSaved(true);
+  };
+  return <Shell><PageHeading eyebrow="School configuration / 04" title="Set your school's curriculum." description="Configure the subjects shown in EduPredict for your KV. Subject offerings vary by school; these settings are stored in this browser and are not a centrally managed school database." />
+    <div className="grid gap-5 xl:grid-cols-[.8fr_1.2fr]">
+      <Card className="p-5 sm:p-6"><Eyebrow>Curriculum scope</Eyebrow><h2 className="display mt-1 text-2xl font-bold">Choose a class group.</h2><div className="mt-5 space-y-4"><label className="block"><span className="text-xs font-bold text-[#49466F]">Class</span><select data-testid="curriculum-class" className="field mt-2" value={classLevel} onChange={(e) => setClassLevel(Number(e.target.value))}>{Array.from({ length: 12 }, (_, i) => i + 1).map((level) => <option key={level} value={level}>{classLabel(level)}</option>)}</select></label>{classLevel >= 11 && <label className="block"><span className="text-xs font-bold text-[#49466F]">Stream</span><select data-testid="curriculum-stream" className="field mt-2" value={stream} onChange={(e) => setStream(e.target.value as SchoolStream)}>{SCHOOL_STREAMS.map((item) => <option key={item} value={item}>{STREAM_LABELS[item]}</option>)}</select></label>}<div className="rounded-xl border border-[#DDD6FE] bg-[#F5F3FF] p-4 text-xs leading-relaxed text-[#5F6280]">Changing this list changes which subjects users can select. It does not train a new model or enable predictions for unsupported subjects.</div></div></Card>
+      <Card className="p-5 sm:p-6"><Eyebrow>Subject list</Eyebrow><h2 className="display mt-1 text-2xl font-bold">One subject per line.</h2><form className="mt-4 space-y-4" onSubmit={save}><textarea data-testid="curriculum-subjects" className="field min-h-[320px] font-mono text-sm" value={text} onChange={(e) => { setText(e.target.value); setSaved(false); }} aria-label="Subjects, one per line" /><p className="text-xs text-[#758279]">Up to 40 subjects, each no longer than 80 characters. Blank lines and duplicate names are removed.</p><div className="flex flex-wrap gap-3"><button data-testid="button-save-curriculum" type="submit" className="btn-primary">Save curriculum</button><button data-testid="button-reset-curriculum" type="button" onClick={() => { resetCurriculum(); setClassLevel(9); setStream('science'); setSaved(false); }} className="btn-quiet">Reset all defaults</button></div>{saved && <p data-testid="status-curriculum-saved" role="status" className="text-sm font-semibold text-[#5B49D6]">Curriculum saved in this browser.</p>}{(!text.trim() || text.split(/\r?\n/).filter((line) => line.trim()).length > 40 || text.split(/\r?\n/).some((line) => line.trim().length > 80)) && <p className="text-xs text-[#9a6551]">Enter 1–40 subjects, each up to 80 characters, to save.</p>}</form></Card>
+    </div>
+  </Shell>;
+}
+
+function Router() {
+  return <RoutedErrorBoundary><Switch>
+    <Route path="/" component={HomePage} />
+    <Route path="/predict" component={PredictPage} />
+    <Route path="/evaluate" component={EvaluatePage} />
+    <Route path="/csv" component={CsvPage} />
+    <Route path="/curriculum" component={CurriculumPage} />
+    <Route component={NotFound} />
+  </Switch></RoutedErrorBoundary>;
+}
+function RoutedErrorBoundary({ children }: { children: ReactNode }) {
+  const [location] = useLocation();
+  return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
+}
+function App() {
+  return <QueryClientProvider client={queryClient}><CurriculumProvider><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></CurriculumProvider></QueryClientProvider>;
+}
+
+export default App;

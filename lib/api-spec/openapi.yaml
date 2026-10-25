@@ -1,0 +1,320 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: student-performance
+    description: Student performance prediction and model evaluation
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /student-performance/model:
+    get:
+      operationId: getStudentPerformanceModel
+      tags: [student-performance]
+      summary: Get dataset and held-out model evaluation
+      responses:
+        "200":
+          description: Model overview and evaluation for supported subjects
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelOverview"
+  /student-performance/predict:
+    post:
+      operationId: predictStudentPerformance
+      tags: [student-performance]
+      summary: Predict a final grade from first-period information
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PredictionInput"
+      responses:
+        "200":
+          description: Predicted grade and similar-student context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictionResult"
+        "400":
+          description: Invalid prediction input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /student-performance/predict-csv:
+    post:
+      operationId: predictStudentPerformanceCsv
+      tags: [student-performance]
+      summary: Validate and predict rows from CSV text
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CsvPredictionInput"
+      responses:
+        "200":
+          description: Valid row predictions and row-level validation errors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CsvPredictionResult"
+        "400":
+          description: Invalid CSV request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    Stream:
+      type: string
+      enum: [science, commerce, humanities]
+    StudentFeatures:
+      type: object
+      properties:
+        g1: { type: number, minimum: 0, maximum: 20 }
+        age: { type: integer, minimum: 15, maximum: 22 }
+        studytime: { type: integer, minimum: 1, maximum: 4 }
+        failures: { type: integer, minimum: 0, maximum: 4 }
+        absences: { type: integer, minimum: 0, maximum: 93 }
+        schoolsup: { type: boolean }
+        famsup: { type: boolean }
+        paid: { type: boolean }
+        higher: { type: boolean }
+        internet: { type: boolean }
+        goout: { type: integer, minimum: 1, maximum: 5 }
+        traveltime: { type: integer, minimum: 1, maximum: 4 }
+        health: { type: integer, minimum: 1, maximum: 5 }
+      required:
+        - g1
+        - age
+        - studytime
+        - failures
+        - absences
+        - schoolsup
+        - famsup
+        - paid
+        - higher
+        - internet
+        - goout
+        - traveltime
+        - health
+    PredictionInput:
+      type: object
+      properties:
+        classLevel: { type: integer, minimum: 1, maximum: 12 }
+        stream:
+          anyOf:
+            - $ref: "#/components/schemas/Stream"
+            - type: "null"
+        subject: { type: string, minLength: 1, maxLength: 80 }
+        student: { $ref: "#/components/schemas/StudentFeatures" }
+      required: [classLevel, stream, subject, student]
+    PredictionResult:
+      type: object
+      properties:
+        predictedGrade: { type: number }
+        gradeBand: { type: string, enum: [needs_support, developing, on_track] }
+        neighborCount: { type: integer }
+        similarStudentPassShare: { type: number, minimum: 0, maximum: 1 }
+        similarStudentGradeRange:
+          type: array
+          items: { type: number }
+        topSignals:
+          type: array
+          items: { $ref: "#/components/schemas/PredictionSignal" }
+        classLevel: { type: integer, minimum: 1, maximum: 12 }
+        stream:
+          anyOf:
+            - $ref: "#/components/schemas/Stream"
+            - type: "null"
+        subject: { type: string }
+      required:
+        - predictedGrade
+        - gradeBand
+        - neighborCount
+        - similarStudentPassShare
+        - similarStudentGradeRange
+        - topSignals
+        - classLevel
+        - stream
+        - subject
+    PredictionSignal:
+      type: object
+      properties:
+        feature: { type: string }
+        value: { type: string }
+        direction: { type: string, enum: [positive, attention] }
+        explanation: { type: string }
+      required: [feature, value, direction, explanation]
+    EvaluationMetric:
+      type: object
+      properties:
+        subject: { type: string }
+        rows: { type: integer }
+        trainRows: { type: integer }
+        testRows: { type: integer }
+        mae: { type: number }
+        rmse: { type: number }
+        r2: { type: number }
+        baselineMae: { type: number }
+        baselineRmse: { type: number }
+        passAccuracy: { type: number }
+        passPrecision: { type: number }
+        passRecall: { type: number }
+        passF1: { type: number }
+        featureImportance:
+          type: array
+          items: { $ref: "#/components/schemas/FeatureImportance" }
+      required:
+        - subject
+        - rows
+        - trainRows
+        - testRows
+        - mae
+        - rmse
+        - r2
+        - baselineMae
+        - baselineRmse
+        - passAccuracy
+        - passPrecision
+        - passRecall
+        - passF1
+        - featureImportance
+    FeatureImportance:
+      type: object
+      properties:
+        feature: { type: string }
+        label: { type: string }
+        importance: { type: number }
+      required: [feature, label, importance]
+    ModelOverview:
+      type: object
+      properties:
+        datasetName: { type: string }
+        sourceUrl: { type: string, format: uri }
+        doi: { type: string }
+        license: { type: string }
+        target: { type: string }
+        split: { type: string }
+        algorithm: { type: string }
+        seed: { type: integer }
+        features:
+          type: array
+          items: { type: string }
+        modelSupport:
+          type: array
+          items: { $ref: "#/components/schemas/ModelSupport" }
+        evaluations:
+          type: array
+          items: { $ref: "#/components/schemas/EvaluationMetric" }
+      required:
+        - datasetName
+        - sourceUrl
+        - doi
+        - license
+        - target
+        - split
+        - algorithm
+        - seed
+        - features
+        - modelSupport
+        - evaluations
+    ModelSupport:
+      type: object
+      properties:
+        modelId: { type: string }
+        subject: { type: string }
+        classLevels:
+          type: array
+          items: { type: integer }
+        streams:
+          type: array
+          items: { $ref: "#/components/schemas/Stream" }
+        scope: { type: string }
+        classSpecific: { type: boolean }
+        kvValidated: { type: boolean }
+      required:
+        - modelId
+        - subject
+        - classLevels
+        - streams
+        - scope
+        - classSpecific
+        - kvValidated
+    CsvPredictionInput:
+      type: object
+      properties:
+        csvText: { type: string, minLength: 1, maxLength: 2000000 }
+      required: [csvText]
+    CsvRowPrediction:
+      type: object
+      properties:
+        rowNumber: { type: integer }
+        studentId: { type: ["string", "null"] }
+        classLevel: { type: integer, minimum: 1, maximum: 12 }
+        stream:
+          anyOf:
+            - $ref: "#/components/schemas/Stream"
+            - type: "null"
+        subject: { type: string }
+        predictedGrade: { type: number }
+        gradeBand: { type: string, enum: [needs_support, developing, on_track] }
+        similarStudentPassShare: { type: number }
+      required: [rowNumber, studentId, classLevel, stream, subject, predictedGrade, gradeBand, similarStudentPassShare]
+    CsvRowError:
+      type: object
+      properties:
+        rowNumber: { type: integer }
+        studentId: { type: ["string", "null"] }
+        classLevel: { type: ["integer", "null"] }
+        subject: { type: ["string", "null"] }
+        message: { type: string }
+      required: [rowNumber, studentId, classLevel, subject, message]
+    CsvPredictionResult:
+      type: object
+      properties:
+        validCount: { type: integer }
+        errorCount: { type: integer }
+        predictions:
+          type: array
+          items: { $ref: "#/components/schemas/CsvRowPrediction" }
+        errors:
+          type: array
+          items: { $ref: "#/components/schemas/CsvRowError" }
+      required: [validCount, errorCount, predictions, errors]
+    ApiError:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+

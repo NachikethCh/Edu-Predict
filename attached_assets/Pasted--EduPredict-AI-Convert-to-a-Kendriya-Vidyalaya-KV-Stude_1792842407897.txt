@@ -1,0 +1,162 @@
+# EduPredict AI — Convert to a Kendriya Vidyalaya (KV) Student Performance Predictor
+
+Modify my existing EduPredict AI project. Do not rebuild the application from scratch. Preserve its current design, navigation, responsive layout, model-evidence page, CSV upload workflow, and working functionality.
+
+## 1. Remove Portuguese completely
+
+Search the entire codebase and remove all Portuguese-specific functionality, including:
+- Portuguese subject options and labels
+- Portuguese datasets, model evaluation results, metrics, charts, and feature-importance results
+- Portuguese-specific prediction logic, filters, validation, and CSV handling
+- Portuguese references in UI text, documentation, and test fixtures where they describe supported application functionality
+
+Ensure no broken imports, stale references, or runtime errors remain.
+
+## 2. Make the application suitable for Indian KV schools
+
+Add a class selector covering Classes I–XII. The subject selector must update automatically based on the selected class.
+
+Use the following subject groups as the initial curriculum configuration:
+
+**Classes I–II**
+- English
+- Hindi
+- Mathematics
+- Environmental Studies (EVS)
+
+**Classes III–V**
+- English
+- Hindi
+- Mathematics
+- Environmental Studies (EVS)
+
+**Classes VI–VIII**
+- English
+- Hindi
+- Mathematics
+- Science
+- Social Science
+- Sanskrit
+- Coding / Artificial Intelligence, where applicable
+- Other school-offered languages or subjects configured by the administrator
+
+**Classes IX–X**
+- English
+- Hindi
+- Mathematics
+- Science
+- Social Science
+- Sanskrit or another school-offered language
+- Artificial Intelligence
+- Information Technology
+- Computer Applications
+- Other permitted CBSE elective or skill subjects
+
+**Classes XI–XII — Science stream**
+- English
+- Hindi or another offered language
+- Physics
+- Chemistry
+- Mathematics
+- Biology
+- Computer Science
+- Informatics Practices
+- Physical Education
+- Other permitted electives
+
+**Classes XI–XII — Commerce stream**
+- English
+- Hindi or another offered language
+- Accountancy
+- Business Studies
+- Economics
+- Mathematics or Applied Mathematics
+- Informatics Practices
+- Computer Science
+- Entrepreneurship
+- Physical Education
+- Other permitted electives
+
+**Classes XI–XII — Humanities stream**
+- English
+- Hindi or another offered language
+- History
+- Geography
+- Political Science
+- Economics
+- Sociology
+- Psychology
+- Mathematics
+- Physical Education
+- Other permitted electives
+
+These are configurable starting options, not a claim that every subject is available in every KV. Support school-specific offerings and subject combinations. Allow an administrator to edit the curriculum configuration without changing application code.
+
+## 3. Update the prediction form
+
+The form should contain:
+- Class
+- Stream, for Classes XI–XII where applicable
+- Subject
+- Relevant previous examination marks
+- Attendance or absences
+- Study time or study habits
+- Other available student-support and background features
+
+Only display fields relevant to the selected class and the selected model. Keep the interface simple and responsive.
+
+## 4. Update CSV upload
+
+Preserve batch prediction and row-level validation.
+
+Support a clearly documented CSV format containing fields such as:
+- student_id (optional)
+- class
+- stream (optional)
+- subject
+- previous_marks
+- attendance or absences
+- study_time
+- other supported model features
+
+Adapt the schema to the actual prediction model and expose a downloadable CSV template. Validate required columns, numerical ranges, missing values, and unsupported class-subject combinations. Report row-specific errors and process valid rows without silently mislabeling invalid rows.
+
+## 5. Do not fabricate model support
+
+The existing model is based on the UCI Student Performance dataset, which contains Mathematics and Portuguese data. Removing Portuguese is a UI and code change; it does not automatically create valid models for all KV subjects.
+
+For every class-subject combination, explicitly track whether a trained and evaluated model is available.
+
+- Use a subject-specific model only when suitable training data and evaluation results exist.
+- Do not apply the Mathematics model to Science, Hindi, Physics, Accountancy, or other subjects as though it were trained for them.
+- Do not use synthetic records as real training or evaluation data.
+- If a model is unavailable, display a clear message explaining that predictions for that subject are not yet supported.
+- Provide a clean architecture for adding datasets and separately trained models later.
+
+Keep model-evidence metrics tied to the correct dataset and subject. Never display old Mathematics metrics as evidence for another subject.
+
+## 6. Update the entire application consistently
+
+Update:
+- Overview dashboard
+- Student estimate page
+- Model evidence page
+- CSV upload page
+- Subject and class dropdowns
+- Charts and labels
+- Validation and error messages
+- Backend API and database schemas, where necessary
+- Tests and documentation
+
+Ensure that class and subject selections persist consistently across the application.
+
+## 7. Verify before finishing
+
+Run the application and tests. Confirm that:
+1. Portuguese no longer appears as a supported subject anywhere.
+2. Class selection correctly filters available subjects.
+3. CSV upload and batch predictions still work for supported models.
+4. Unsupported subject combinations receive an informative message rather than a fabricated prediction.
+5. Existing working features and styling are preserved.
+
+Finally, summarize the files changed, the tests performed, the supported prediction combinations, and any remaining limitations.

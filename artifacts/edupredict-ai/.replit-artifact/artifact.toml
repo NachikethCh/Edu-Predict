@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "EduPredict AI"
+description = "An evidence-aware student performance predictor for students and educators. Explore the UCI Student Performance dataset, enter early-term academic signals, review a transparent prediction with practical study suggestions, evaluate the model, and validate or export CSV predictions."
+version = "1.0.0"
+id = "artifacts/edupredict-ai"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23657
+
+[services.development]
+run = "pnpm --filter @workspace/edupredict-ai run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/edupredict-ai", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/edupredict-ai/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23657"
+BASE_PATH = "/"
