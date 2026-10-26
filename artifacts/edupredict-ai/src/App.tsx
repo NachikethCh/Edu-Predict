@@ -12,6 +12,7 @@ import {
   Sparkles, Upload, Users, X, Settings2,
 } from 'lucide-react';
 import {
+  setBaseUrl,
   useGetStudentPerformanceModel,
   getGetStudentPerformanceModelQueryKey,
   usePredictStudentPerformance,
@@ -25,6 +26,9 @@ import {
 import { serializeCsvResults } from '@/lib/csv-export';
 import { CurriculumProvider, useCurriculum } from '@/lib/curriculum-context';
 import { classLabel, findModelSupport, getCurriculumEntry, SCHOOL_STREAMS, STREAM_LABELS, type SchoolStream } from '@/lib/curriculum-config';
+
+// Route generated API-client requests to the deployed Express backend.
+setBaseUrl('https://edu-predict-1-rkty.onrender.com');
 
 const queryClient = new QueryClient();
 type PageKey = 'home' | 'predict' | 'evaluate' | 'csv' | 'curriculum';
@@ -184,29 +188,8 @@ const booleanFields: { key: keyof StudentFeatures; label: string; note: string }
   { key: 'internet', label: 'Internet access at home', note: 'Home internet access' },
 ];
 
-type MLMode = 'early' | 'updated';
-
-type MLResult = {
-  mode: MLMode;
-  predictedGrade: number;
-  targetScale: string | number[];
-  model: string;
-  featureCount: number;
-  featuresUsed: string[];
-  dataset: string;
-  datasetRows: number;
-  crossValidationMetrics: { mae: number; rmse: number; r2: number };
-  validatedForKV: boolean;
-  validatedForCBSE: boolean;
-  warning: string;
-};
-
 function PredictPage() {
   const [student, setStudent] = useState<StudentFeatures>(initialStudent);
-  const [mlMode, setMlMode] = useState<MLMode>('updated');
-  const [mlResult, setMlResult] = useState<MLResult | null>(null);
-  const [mlLoading, setMlLoading] = useState(false);
-  const [mlError, setMlError] = useState('');
   const { selection, subjects, setClassLevel, setStream, setSubject } = useCurriculum();
   const prediction = usePredictStudentPerformance();
   const model = useGetStudentPerformanceModel({ query: { queryKey: getGetStudentPerformanceModelQueryKey() } });
@@ -223,45 +206,6 @@ function PredictPage() {
     if (!canPredict) return;
     const payload: PredictionInput = { classLevel: selection.classLevel, stream: selection.stream, subject: selection.subject, student };
     prediction.mutate({ data: payload });
-  };
-
-  const submitMLPrediction = async () => {
-    setMlLoading(true);
-    setMlError('');
-    setMlResult(null);
-
-    const { g1, ...studentWithoutG1 } = student;
-    const mlStudent = mlMode === 'updated'
-      ? { ...studentWithoutG1, g1 }
-      : studentWithoutG1;
-
-    try {
-      const response = await fetch('/api/ml-prediction/predict', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: mlMode, student: mlStudent }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          typeof data.error === 'string'
-            ? data.error
-            : 'The experimental prediction could not be generated.'
-        );
-      }
-
-      setMlResult(data as MLResult);
-    } catch (error) {
-      setMlError(
-        error instanceof Error
-          ? error.message
-          : 'Could not connect to the experimental ML service.'
-      );
-    } finally {
-      setMlLoading(false);
-    }
   };
   return <Shell><PageHeading eyebrow="Individual estimate / 01" title="Start with what you know." description="Enter first-period context to see an estimated final grade, how it was informed, and a few grounded ways to offer support. A result is not a judgment of a student's potential." action={<div className="flex items-center gap-2 rounded-full border border-[#d9ddcf] bg-[#F0EEFF] px-3 py-2 text-xs font-semibold text-[#5142B5]"><ShieldCheck size={15} /> No identifying details</div>} />
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(330px,.88fr)]">
@@ -282,94 +226,11 @@ function PredictPage() {
           <div className="grid gap-2 sm:grid-cols-2">
             {booleanFields.map(({ key, label, note }) => <label key={key} data-testid={`field-${key}`} className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#e3e1d7] bg-[#F7F7FC] p-3.5 transition-colors hover:border-[#B9B0FF]"><input data-testid={`input-${key}`} type="checkbox" checked={student[key] as boolean} onChange={(e) => setStudent((old) => ({ ...old, [key]: e.target.checked }))} className="mt-0.5 h-4 w-4 accent-[#725CFF]" /><span><span className="block text-xs font-semibold text-[#40594e]">{label}</span><span className="mt-1 block text-[10px] leading-relaxed text-[#7c8980]">{note}</span></span></label>)}
           </div>
-          <div className="mt-6 border-t border-[#E0E2EF] pt-5">
-            <p className="mb-3 text-[11px] leading-relaxed text-[#7c8980]">
-              The original curriculum model remains available above. You can also try the separate experimental ML model below.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-              <label className="block">
-                <span className="block text-xs font-bold text-[#49466F]">Experimental ML mode</span>
-                <select
-                  data-testid="select-ml-mode"
-                  value={mlMode}
-                  onChange={(event) => {
-                    setMlMode(event.target.value as MLMode);
-                    setMlResult(null);
-                    setMlError('');
-                  }}
-                  className="field mt-2"
-                >
-                  <option value="early">Early prediction — without first-period grade</option>
-                  <option value="updated">Updated prediction — includes first-period grade</option>
-                </select>
-              </label>
-              <button
-                data-testid="button-submit-ml-prediction"
-                type="button"
-                disabled={mlLoading}
-                onClick={submitMLPrediction}
-                className="btn-primary inline-flex items-center justify-center gap-2"
-              >
-                {mlLoading
-                  ? <><LoaderCircle className="animate-spin" size={16} /> Estimating</>
-                  : <>Try experimental ML <ArrowRight size={16} /></>}
-              </button>
-            </div>
-            <p className="mt-2 text-[10px] leading-relaxed text-[#8a6949]">
-              Research prototype using Portuguese student data; not validated for KV or CBSE.
-            </p>
-          </div>
-          {mlError && <div data-testid="status-ml-error" role="alert" className="mt-4 rounded-xl border border-[#e5c6bc] bg-[#fbefea] p-3 text-sm text-[#784f43]">{mlError}</div>}
+          <div className="mt-6 flex flex-col gap-3 border-t border-[#E0E2EF] pt-5 sm:flex-row sm:items-center sm:justify-between"><p className="max-w-xs text-[11px] leading-relaxed text-[#7c8980]">Required fields are limited to values used in the model. You can leave context at its default if unknown.</p><button data-testid="button-submit-prediction" type="submit" disabled={prediction.isPending || !canPredict} className="btn-primary inline-flex items-center justify-center gap-2">{prediction.isPending ? <><LoaderCircle className="animate-spin" size={16} /> Estimating</> : <>See an estimate <ArrowRight size={16} /></>}</button></div>
           {prediction.isError && <div data-testid="status-prediction-error" role="alert" className="mt-4 rounded-xl border border-[#e5c6bc] bg-[#fbefea] p-3 text-sm text-[#784f43]">The estimate could not be generated. Please check your connection and try again.</div>}
         </form>
       </Card>
       <div className="space-y-5">
-        {mlResult && <Card className="overflow-hidden" testId="panel-ml-prediction-result">
-          <div className="bg-gradient-to-br from-[#24204F] to-[#171B3B] px-5 py-5 text-white sm:px-6">
-            <div className="text-xs font-semibold uppercase tracking-wider text-indigo-200">
-              Experimental ML · {mlResult.mode === 'early' ? 'Early prediction' : 'Updated prediction'}
-            </div>
-            <h2 className="display mt-2 text-2xl font-bold">Estimated final grade</h2>
-            <div className="mt-5 flex items-end gap-3">
-              <span data-testid="text-ml-predicted-grade" className="display text-[58px] font-bold leading-none">
-                {num(mlResult.predictedGrade, 1)}
-              </span>
-              <span className="pb-1 text-sm text-indigo-100">out of 20</span>
-            </div>
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/20">
-              <div className="h-full rounded-full bg-[#A78BFA]" style={{ width: `${Math.max(0, Math.min(100, mlResult.predictedGrade / 20 * 100))}%` }} />
-            </div>
-          </div>
-          <div className="space-y-4 p-5 sm:p-6">
-            <KeyValue label="Algorithm" value={mlResult.model} />
-            <KeyValue label="Features used" value={String(mlResult.featureCount)} />
-            <KeyValue label="Training dataset" value={`${mlResult.dataset} (${mlResult.datasetRows} records)`} />
-            <div>
-              <Eyebrow>5-fold cross-validation</Eyebrow>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                <div className="rounded-xl bg-[#F4F3FF] p-3">
-                  <div className="text-[10px] text-[#777C9A]">MAE</div>
-                  <div className="mono mt-1 text-lg font-bold text-[#35305F]">{num(mlResult.crossValidationMetrics.mae, 2)}</div>
-                </div>
-                <div className="rounded-xl bg-[#F4F3FF] p-3">
-                  <div className="text-[10px] text-[#777C9A]">RMSE</div>
-                  <div className="mono mt-1 text-lg font-bold text-[#35305F]">{num(mlResult.crossValidationMetrics.rmse, 2)}</div>
-                </div>
-                <div className="rounded-xl bg-[#F4F3FF] p-3">
-                  <div className="text-[10px] text-[#777C9A]">R²</div>
-                  <div className="mono mt-1 text-lg font-bold text-[#35305F]">{num(mlResult.crossValidationMetrics.r2, 2)}</div>
-                </div>
-              </div>
-              <p className="mt-2 text-[10px] leading-relaxed text-[#777C9A]">
-                MAE and RMSE are grade-point error measures (lower is better). R² describes model fit on evaluation data; it is not a confidence score.
-              </p>
-            </div>
-            <div role="note" data-testid="text-ml-warning" className="rounded-xl border border-[#ead2b5] bg-[#faf0df] p-4 text-xs leading-relaxed text-[#695c49]">
-              <strong>Important limitation:</strong> {mlResult.warning}
-              <p className="mt-2">This research model is not validated for KV or CBSE students. Do not use this estimate alone to make decisions about a student.</p>
-            </div>
-          </div>
-        </Card>}
         {result ? <PredictionOutcome result={result} model={model.data} /> : <div className="rounded-[20px] border border-[#d9dfd4] bg-[#F0EEFF] p-6 sm:p-7" data-testid="panel-prediction-empty">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#EAE7FF] text-[#5B49D6]"><Lightbulb size={21} /></div><Eyebrow>What happens next</Eyebrow><h2 className="display mt-2 text-2xl font-bold text-[#35305F]">A result with its context attached.</h2><p className="mt-3 text-sm leading-relaxed text-[#666A88]">After submitting, you will see the estimate alongside similar-student context, contributing signals, and practical prompts for a supportive conversation.</p>
           <div className="mt-6 space-y-3">{['A grade estimate, not a promise', 'Patterns from comparable records', 'Signals and plain-language explanations', 'Ways to offer support without blame'].map((item, i) => <div key={item} className="flex items-center gap-3 text-xs text-[#5F6280]"><span className="mono text-[10px] text-[#9a9e88]">0{i + 1}</span>{item}</div>)}</div>
